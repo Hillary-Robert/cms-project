@@ -1,24 +1,24 @@
 const prisma = require("../lib/prisma");
 
-
-async function isOwner(req, res, next){
+async function isOwner(req, res, next) {
   const id = Number(req.params.questionId);
+
   const record = await prisma.question.findUnique({
-    where: {id},
-    include: {keywords: true}
-  })
+    where: { id },
+  });
 
-  if (!question) {
-      return res.status(404).json({ message: "Question not found" });
-    }
+  if (!record) {
+    return res.status(404).json({ message: "Question not found" });
+  }
 
-    if (question.userId !== req.user.userId) {
-      return res.status(403).json({ error: "You can only modify your own question" });
-    }
+  if (record.userId !== req.user.userId) {
+    return res.status(403).json({
+      error: "You can only modify your own question",
+    });
+  }
 
-    req.question = question;
-    next();
-
+  req.question = record;
+  next();
 }
 
 module.exports = isOwner;

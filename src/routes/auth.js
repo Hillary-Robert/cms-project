@@ -5,8 +5,10 @@ const jwt = require("jsonwebtoken")
 const bcrypt = require("bcrypt")
 const SECRET = process.env.JWT_SECRET;
 
+console.log("JWT_SECRET:", process.env.JWT_SECRET);
+
 // Post/api/auth/register
-router.post(",register", async(req, res)=>{
+router.post("/register", async(req, res)=>{
   const {email, password, name} = req.body
 
   if(!email || !password || !name){
@@ -41,9 +43,11 @@ router.post(",register", async(req, res)=>{
 
 // Post/api/auth/login
 
-
 router.post("/login", async (req, res) => {
+  console.log("Incoming body:", req.body);
   const { email, password } = req.body;
+
+  
 
   if (!email || !password) {
     return res.status(400).json({ error: "email and password are required" });
@@ -54,12 +58,15 @@ router.post("/login", async (req, res) => {
     where: { email },
   });
 
+  console.log("User found:", user);
+
   if (!user) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
   // Verify the password
   const isValid = await bcrypt.compare(password, user.password);
+  console.log("Password valid:", isValid);
 
   if (!isValid) {
     return res.status(401).json({ error: "Invalid credentials" });

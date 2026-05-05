@@ -3,7 +3,7 @@ const jwt = require("jsonwebtoken")
 const SECRET = process.env.JWT_SECRET
 
 function authenticate(request, response, next){
-  const authHeader = request.header.authorization
+  const authHeader = request.headers.authorization
 
   if(!authHeader || !authHeader.startsWith("Bearer ")){
     return response.status(401).json({ error: "No token provided" });
