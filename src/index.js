@@ -1,25 +1,13 @@
 const express = require('express');
-const authRouter = require("./routes/auth");
 const app = express();
-const questionsRouter = require("./routes/questions")
-const path = require("path")
-const prisma = require("./lib/prisma");
+const logger = require("./lib/logger");
 const PORT = process.env.PORT || 3000;
+const prisma = require("./lib/prisma")
 
-app.use(express.static(path.join(__dirname, "..", "public")))
-
-// Middleware to parse JSON bodies (will be useful in later steps)
-app.use(express.json());
-app.use("/api/auth", authRouter)
-app.use("/api/questions", questionsRouter)
-
-app.use((req, res)=>{
-  res.status(404).json({msg: "Page not found"})
-})
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  logger.info({port: PORT}, `Server is running on http://localhost:${PORT}`);
 });
 
 
@@ -33,5 +21,7 @@ process.on("SIGTERM", async () => {
   await prisma.$disconnect();
   process.exit(0);
 });
+
+
 
 

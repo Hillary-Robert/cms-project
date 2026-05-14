@@ -1,10 +1,21 @@
 const express = require("express");
 const router = express.Router();
-const prisma = require("../lib/prisma");
+const {prisma} = require("../lib/prisma");
 const authenticate = require("../middleware/auth");
 const isOwner = require("../middleware/isOwner");
 const multer = require("multer")
-const path = require("path")
+const path = require("path");
+const {z} = require("zod")
+const { NotFoundError, ValidationError } = require("../lib/errors");
+
+router.use(authenticate);
+
+const questionInput = z.object({
+  question: z.string().min(1),
+  date: z.coerce.date(),
+  answer: z.string().min(1),
+  keywords: z.union([z.string(), z.array(z.string())]).optional(),
+});
 
 
 const storage = multer.diskStorage({
@@ -130,6 +141,7 @@ router.get("/me/bookmarks", async (req, res) => {
 //  GET api/question/:questionId- Get a single by Id with  attempts and bookmarks
 router.get("/:questionId", async (req, res) => {
   const questionId = Number(req.params.questionId);
+
   const question = await prisma.question.findUnique({
     where: { id: questionId },
     include: {
@@ -155,9 +167,14 @@ router.get("/:questionId", async (req, res) => {
     },
   });
 
+  console.log("QUESTION:", question);
+
   if (!question) {
-    return res.status(404).json({ msg: "Question doesn't exist" });
-  }
+  return res.status(404).json({message: "question not found"});
+  
+
+}
+
 
   res.json(formatQuestion(question, req.user.userId));
 });
@@ -166,12 +183,8 @@ router.get("/:questionId", async (req, res) => {
 // POST- Create a new question
 
 router.post("/", upload.single("image"), async (req, res) => {
-  const { question, date, answer, keywords } = req.body;
-  if (!question || !date || !answer) {
-    return res
-      .status(400)
-      .json({ msg: "question, date and answer are required " });
-  }
+
+  const { question, date, answer, keywords } = questionInput.parse(req.body);
 
   const keywordsArray = Array.isArray(keywords) ? keywords : [];
   const imageUrl = req.file? `/uploads/${req.file.filename}` : null;
@@ -206,15 +219,13 @@ router.put("/:questionId", isOwner, upload.single("image"), async (req, res) => 
   const ques = await prisma.question.findUnique({ where: { id: questionId } });
 
   if (!ques) {
-    return res.status(404).json({ msg: "Question doesn't exist" });
+    throw new NotFoundError("Question doesn't exist")
   }
 
-  const { question, date, answer, keywords } = req.body;
+  const { question, date, answer, keywords } = questionInput.parse(req.body);
 
   if (!question || !date || !answer) {
-    return res
-      .status(400)
-      .json({ msg: "question, date and answer are required " });
+      throw new ValidationError("Question, date and answer are mandatory")
   }
 
   const imageUrl = req.file? `/uploads/${req.file.filename}` : null;
@@ -251,7 +262,7 @@ router.delete("/:questionId", isOwner, async (req, res) => {
   });
 
   if (!questionIndex) {
-    return res.status(404).json({ message: "Question not found" });
+    throw new NotFoundError("Question not found")
   }
 
   await prisma.attempt.deleteMany({
@@ -281,11 +292,9 @@ router.delete("/:questionId", isOwner, async (req, res) => {
 router.post("/:questionId/attempt", async (req, res) => {
   const questionId = Number(req.params.questionId);
   const { userAnswer } = req.body;
-
+ 
   if (!userAnswer) {
-    return res.status(400).json({
-      msg: "plEASE answer the question",
-    });
+    throw new ValidationError("Please answer the question")
   }
 
   const question = await prisma.question.findUnique({
@@ -293,9 +302,7 @@ router.post("/:questionId/attempt", async (req, res) => {
   });
 
   if (!question) {
-    return res.status(404).json({
-      msg: "Question is missing",
-    });
+    throw new NotFoundError("Question is missing")
   }
 
   const isCorrect =
@@ -329,9 +336,7 @@ router.post("/:questionId/bookmark", async (req, res) => {
   });
 
   if (!question) {
-    return res.status(404).json({
-      msg: "Question not found",
-    });
+    throw new NotFoundError("Question not found")
   }
 
   const existingBookmark = await prisma.bookmark.findFirst({
@@ -342,9 +347,7 @@ router.post("/:questionId/bookmark", async (req, res) => {
   });
 
   if (existingBookmark) {
-    return res.status(400).json({
-      msg: "Question already bookmarked",
-    });
+    throw new ValidationError("Question already bookmarked")
   }
 
   const bookmark = await prisma.bookmark.create({
@@ -377,9 +380,7 @@ router.delete("/:questionId/bookmark", async (req, res) => {
   });
 
   if (!bookmark) {
-    return res.status(404).json({
-      msg: "Bookmark not found",
-    });
+    throw new NotFoundError("Bookmark not found")
   }
 
   await prisma.bookmark.delete({
@@ -402,7 +403,7 @@ router.post("/:questionId/like", async (req, res) => {
   });
 
   if (!question) {
-    return res.status(404).json({ msg: "Question not found" });
+    throw new NotFoundError("Question not found")
   }
 
   const existingLike = await prisma.questionLike.findFirst({
@@ -413,7 +414,7 @@ router.post("/:questionId/like", async (req, res) => {
   });
 
   if (existingLike) {
-    return res.status(400).json({ msg: "Question already liked" });
+    throw new ValidationError("Question already liked")
   }
 
   const like = await prisma.questionLike.create({
@@ -445,7 +446,7 @@ router.delete("/:questionId/like", async (req, res) => {
   });
 
   if (!like) {
-    return res.status(404).json({ msg: "Like not found" });
+    throw new NotFoundError("Like not found")
   }
 
   await prisma.questionLike.delete({
@@ -458,5 +459,7 @@ router.delete("/:questionId/like", async (req, res) => {
     msg: "Question unliked successfully",
   });
 });
+
+
 
 module.exports = router;

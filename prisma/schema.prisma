@@ -8,95 +8,78 @@ datasource db {
 }
 
 model User {
-  id        Int        @id @default(autoincrement())
-  email     String     @unique @db.VarChar(255)
-  password  String     @db.VarChar(255)
-  name      String     @db.VarChar(100)
-
-  questions Question[]
-  attempts  Attempt[]
-  bookmarks Bookmark[]
+  id            Int            @id @default(autoincrement())
+  email         String         @unique @db.VarChar(255)
+  password      String         @db.VarChar(255)
+  name          String         @db.VarChar(100)
+  attempts      Attempt[]
+  bookmarks     Bookmark[]
   questionLikes QuestionLike[]
-
+  questions     Question[]
 }
 
 model Question {
-  id        Int       @id @default(autoincrement())
-  question  String    @db.VarChar(255)
+  id        Int            @id @default(autoincrement())
+  question  String         @db.VarChar(255)
   date      DateTime
-  imageUrl String? @db.VarChar(255)
-  answer    String    @db.Text
-
+  answer    String         @db.Text
   userId    Int
-  user      User      @relation(fields: [userId], references: [id])
-
-  keywords  Keyword[]
+  imageUrl  String?        @db.VarChar(255)
   attempts  Attempt[]
   bookmarks Bookmark[]
-  likes QuestionLike[]
+  likes     QuestionLike[]
+  user      User           @relation(fields: [userId], references: [id])
+  keywords  Keyword[]      @relation("KeywordToQuestion")
 
+  @@index([userId], map: "questions_userId_fkey")
   @@map("questions")
 }
 
 model Keyword {
   id        Int        @id @default(autoincrement())
   name      String     @unique @db.VarChar(100)
-
-  questions Question[]
+  questions Question[] @relation("KeywordToQuestion")
 
   @@map("keywords")
 }
 
-
 model Attempt {
-  id          Int      @id @default(autoincrement())
-  userAnswer  String   @db.Text
-  isCorrect   Boolean
-  createdAt   DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  userAnswer String   @db.Text
+  isCorrect  Boolean
+  createdAt  DateTime @default(now())
+  userId     Int
+  questionId Int
+  question   Question @relation(fields: [questionId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
 
-  userId      Int
-  user        User     @relation(fields: [userId], references: [id])
-
-  questionId  Int
-  question    Question @relation(fields: [questionId], references: [id])
-
+  @@index([questionId], map: "attempts_questionId_fkey")
+  @@index([userId], map: "attempts_userId_fkey")
   @@map("attempts")
 }
 
-
 model Bookmark {
-
   id         Int      @id @default(autoincrement())
-
   createdAt  DateTime @default(now())
-
   userId     Int
-
+  questionId Int
+  question   Question @relation(fields: [questionId], references: [id])
   user       User     @relation(fields: [userId], references: [id])
 
-  questionId Int
-
-  question   Question @relation(fields: [questionId], references: [id])
-
   @@unique([userId, questionId])
-
+  @@index([questionId], map: "bookmarks_questionId_fkey")
   @@map("bookmarks")
-
 }
-
-
 
 model QuestionLike {
   id         Int      @id @default(autoincrement())
   createdAt  DateTime @default(now())
-
   userId     Int
-  user       User     @relation(fields: [userId], references: [id])
-
   questionId Int
   question   Question @relation(fields: [questionId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
 
   @@unique([userId, questionId])
+  @@index([questionId], map: "question_likes_questionId_fkey")
   @@map("question_likes")
 }
-
