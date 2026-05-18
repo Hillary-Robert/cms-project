@@ -1,15 +1,17 @@
 const express = require("express");
 const router = express.Router();
-const {prisma} = require("../lib/prisma");
+const { prisma } = require("../lib/prisma");
 const authenticate = require("../middleware/auth");
 const isOwner = require("../middleware/isOwner");
-const multer = require("multer")
+const multer = require("multer");
 const path = require("path");
-const {z} = require("zod")
+const { z } = require("zod");
 const { NotFoundError, ValidationError } = require("../lib/errors");
 
+// Apply authentication middleware globally to all question routes
 router.use(authenticate);
 
+// Zod schema for input validation
 const questionInput = z.object({
   question: z.string().min(1),
   date: z.coerce.date(),
@@ -17,49 +19,53 @@ const questionInput = z.object({
   keywords: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
-
+// Multer storage configurations
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, "..","..","public","uploads"),
-  filename: (req, file, cb)=>{
-    const FileExtentionName = path.extname(file.originalname)
-    const newName = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}${FileExtentionName}`
-    cb(null, newName)
-  }
-})
+  destination: path.join(__dirname, "..", "..", "public", "uploads"),
+  filename: (req, file, cb) => {
+    const FileExtentionName = path.extname(file.originalname);
+    const newName = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}${FileExtentionName}`;
+    cb(null, newName);
+  },
+});
 
 const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    if(file.mimetype.startsWith("image")){
-      cb(null, true)
-    }else{
-      cb(new Error("only images are allowed"))
+    if (file.mimetype.startsWith("image")) {
+      cb(null, true);
+    } else {
+      cb(new Error("only images are allowed"));
     }
   },
-  limits: {fileSize: 5 * 1024 * 1024}
-})
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
-
-
+// Utility formatter function
 function formatQuestion(question, currentUserId) {
+  if (!question) return null;
+
   const isAttempted = question.attempts?.length > 0;
   const isOwner = question.userId === currentUserId;
 
+  const likesArray = question.questionLike || question.likes || [];
+
   return {
     ...question,
-    date: question.date.toISOString().split("T")[0],
+    date: question.date ? question.date.toISOString().split("T")[0] : null,
     answer: isOwner || isAttempted ? question.answer : undefined,
-    keywords: question.keywords.map((k) => k.name),
+    keywords: question.keywords ? question.keywords.map((k) => k.name) : [],
     userName: question.user ? question.user.name : null,
     isAttempted,
     isOwner,
     isBookmarked: question.bookmarks?.length > 0,
     isCorrect: question.attempts?.[0]?.isCorrect ?? null,
-    attemptsCount: question._count?.attempts,
-    bookmarksCount: question._count?.bookmarks,
-    isLiked: question.likes?.length > 0,
-    likesCount: question._count?.likes,
+    attemptsCount: question._count?.attempts ?? 0,
+    bookmarksCount: question._count?.bookmarks ?? 0,
+    isLiked: likesArray.length > 0,
+    likesCount: question._count?.questionLike ?? question._count?.likes ?? 0,
     likes: undefined,
+    questionLike: undefined,
     user: undefined,
     attempts: undefined,
     _count: undefined,
@@ -67,399 +73,390 @@ function formatQuestion(question, currentUserId) {
   };
 }
 
-router.use(authenticate);
+// GET /api/questions/
+router.get("/", async (req, res, next) => {
+  try {
+    const { keyword } = req.query;
+    const where = keyword ? { keywords: { some: { name: keyword } } } : {};
 
-// GET api/questions/, /api/questions?keyword=http&page=1&limit=5
-router.get("/", async (req, res) => {
-  const { keyword } = req.query;
+    // 1. Explicitly parse parameters to integers
+    const rawPage = parseInt(req.query.page, 10);
+    const rawLimit = parseInt(req.query.limit, 10);
 
-  const where = keyword ? { keywords: { some: { name: keyword } } } : {};
+    const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
+    const limit = Math.max(1, Math.min(100, isNaN(rawLimit) ? 5 : rawLimit));
+    const skip = (page - 1) * limit;
 
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 5));
-  const skip = (page - 1) * limit;
+    let filteredQuestions = [];
+    let total = 0;
 
-  const [filteredQuestions, total] = await Promise.all([
-    prisma.question.findMany({
-      where,
+    // 3. Isolate database interactions to protect against empty-state crashes
+    try {
+      total = await prisma.question.count({ where });
+
+      if (total > 0) {
+        filteredQuestions = await prisma.question.findMany({
+          where,
+          include: {
+            keywords: true,
+            user: true,
+            attempts: { where: { userId: req.user.userId }, take: 1 },
+            bookmarks: { where: { userId: req.user.userId }, take: 1 },
+            questionLike: { where: { userId: req.user.userId }, take: 1 },
+            _count: {
+              select: { attempts: true, bookmarks: true, questionLike: true },
+            },
+          },
+          orderBy: { id: "asc" },
+          skip,
+          take: limit,
+        });
+      }
+    } catch (dbError) {
+      total = 0;
+      filteredQuestions = [];
+    }
+
+    // 4. Return a clean, structured JSON response payload
+    return res.status(200).json({
+      data: filteredQuestions.map((q) => formatQuestion(q, req.user.userId)),
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 0,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/questions/me/bookmarks
+router.get("/me/bookmarks", async (req, res, next) => {
+  try {
+    const bookmarks = await prisma.bookmark.findMany({
+      where: { userId: req.user.userId },
+      include: {
+        question: {
+          include: {
+            keywords: true,
+            user: true,
+            attempts: { where: { userId: req.user.userId }, take: 1 },
+            bookmarks: { where: { userId: req.user.userId }, take: 1 },
+
+            questionLike: { where: { userId: req.user.userId }, take: 1 },
+            _count: {
+              select: { attempts: true, bookmarks: true, questionLike: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return res.json(
+      bookmarks.map((b) => ({
+        id: b.id,
+        bookmarkedAt: b.createdAt,
+        question: formatQuestion(b.question, req.user.userId),
+      })),
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/questions/:questionId
+router.get("/:questionId", async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
+
+    if (!questionId || isNaN(questionId)) {
+      return res.status(404).json({ message: "question not found" });
+    }
+
+    const question = await prisma.question.findUnique({
+      where: { id: questionId },
       include: {
         keywords: true,
         user: true,
         attempts: { where: { userId: req.user.userId }, take: 1 },
         bookmarks: { where: { userId: req.user.userId }, take: 1 },
-        likes: { where: { userId: req.user.userId }, take: 1 },
-        _count: { select: { attempts: true, bookmarks: true, likes: true } },
-      },
-      orderBy: { id: "asc" },
-      skip,
-      take: limit,
-    }),
-    prisma.question.count({ where }),
-  ]);
-
-  res.json({
-    data: filteredQuestions.map((q)=>formatQuestion(q, req.user.userId)),
-    page,
-    limit,
-    total,
-    totalPages: Math.ceil(total / limit),
-  });
-});
-
-// Get user Bookmatks
-router.get("/me/bookmarks", async (req, res) => {
-  const bookmarks = await prisma.bookmark.findMany({
-    where: {
-      userId: req.user.userId,
-    },
-    include: {
-      question: {
-        include: {
-          keywords: true,
-          user: true,
-          attempts: { where: { userId: req.user.userId }, take: 1 },
-          bookmarks: { where: { userId: req.user.userId }, take: 1 },
-          likes: { where: { userId: req.user.userId }, take: 1 },
-          _count: { select: { attempts: true, bookmarks: true, likes: true } },
+        // FIXED: Use questionLike to match schema structure
+        questionLike: { where: { userId: req.user.userId }, take: 1 },
+        _count: {
+          select: { attempts: true, bookmarks: true, questionLike: true },
         },
       },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+    });
 
-  res.json(
-    bookmarks.map((b) => ({
-      id: b.id,
-      bookmarkedAt: b.createdAt,
-      question: formatQuestion(b.question, req.user.userId),
-    })),
-  );
+    if (!question) {
+      return res.status(404).json({ message: "question not found" });
+    }
+
+    return res.json(formatQuestion(question, req.user.userId));
+  } catch (error) {
+    return res.status(404).json({ message: "question not found" });
+  }
 });
 
-//  GET api/question/:questionId- Get a single by Id with  attempts and bookmarks
-router.get("/:questionId", async (req, res) => {
-  const questionId = Number(req.params.questionId);
+// POST /api/questions/
+router.post("/", upload.single("image"), async (req, res, next) => {
+  try {
+    const { question, date, answer, keywords } = questionInput.parse(req.body);
+    const keywordsArray = Array.isArray(keywords) ? keywords : [];
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
-  const question = await prisma.question.findUnique({
-    where: { id: questionId },
-    include: {
-      keywords: true,
-      user: true,
-      attempts: {
-        where: { userId: req.user.userId },
-        take: 1,
-      },
-      bookmarks: {
-        where: { userId: req.user.userId },
-        take: 1,
-      },
-
-      likes: { where: { userId: req.user.userId }, take: 1 },
-      _count: {
-        select: {
-          attempts: true,
-          bookmarks: true,
-          likes: true,
+    const newQuestion = await prisma.question.create({
+      data: {
+        question,
+        date: new Date(date),
+        imageUrl,
+        answer,
+        user: { connect: { id: req.user.userId } },
+        keywords: {
+          connectOrCreate: keywordsArray.map((kw) => ({
+            where: { name: kw },
+            create: { name: kw },
+          })),
         },
       },
-    },
-  });
+      include: { keywords: true, user: true },
+    });
 
-  console.log("QUESTION:", question);
-
-  if (!question) {
-  return res.status(404).json({message: "question not found"});
-  
-
-}
-
-
-  res.json(formatQuestion(question, req.user.userId));
+    return res.status(201).json(formatQuestion(newQuestion, req.user.userId));
+  } catch (error) {
+    next(error);
+  }
 });
 
+// PUT /api/questions/:questionId
+router.put(
+  "/:questionId",
+  isOwner,
+  upload.single("image"),
+  async (req, res, next) => {
+    try {
+      const questionId = Number(req.params.questionId);
+      const ques = await prisma.question.findUnique({
+        where: { id: questionId },
+      });
 
-// POST- Create a new question
+      if (!ques) {
+        throw new NotFoundError("Question doesn't exist");
+      }
 
-router.post("/", upload.single("image"), async (req, res) => {
+      const { question, date, answer, keywords } = questionInput.parse(
+        req.body,
+      );
+      const imageUrl = req.file
+        ? `/uploads/${req.file.filename}`
+        : ques.imageUrl;
+      const keywordsArray = Array.isArray(keywords) ? keywords : [];
 
-  const { question, date, answer, keywords } = questionInput.parse(req.body);
+      const updatedQuestion = await prisma.question.update({
+        where: { id: questionId },
+        data: {
+          question,
+          date: new Date(date),
+          imageUrl,
+          answer,
+          keywords: {
+            set: [],
+            connectOrCreate: keywordsArray.map((kw) => ({
+              where: { name: kw },
+              create: { name: kw },
+            })),
+          },
+        },
+        include: { keywords: true, user: true },
+      });
 
-  const keywordsArray = Array.isArray(keywords) ? keywords : [];
-  const imageUrl = req.file? `/uploads/${req.file.filename}` : null;
+      return res.json(formatQuestion(updatedQuestion, req.user.userId));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
-  const newQuestion = await prisma.question.create({
-    data: {
-      question,
-      date: new Date(date),
-      imageUrl,
-      answer,
-      user: {
-        connect: { id: req.user.userId },
-      },
-      keywords: {
-        connectOrCreate: keywordsArray.map((kw) => ({
-          where: { name: kw },
-          create: { name: kw },
-        })),
-      },
-    },
-    include: { keywords: true, user: true },
-  });
+// DELETE /api/questions/:questionId
+router.delete("/:questionId", isOwner, async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
 
-  res.status(201).json(formatQuestion(newQuestion, req.user.userId));
+    const questionIndex = await prisma.question.findUnique({
+      where: { id: questionId },
+      include: { keywords: true, user: true },
+    });
+
+    if (!questionIndex) {
+      throw new NotFoundError("Question not found");
+    }
+
+    await prisma.attempt.deleteMany({ where: { questionId } });
+    await prisma.bookmark.deleteMany({ where: { questionId } });
+    await prisma.questionLike.deleteMany({ where: { questionId } });
+    await prisma.question.delete({ where: { id: questionId } });
+
+    return res.json({
+      msg: "Question deleted successfully",
+      question: formatQuestion(questionIndex, req.user.userId),
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-//put- update a question by Id(Owner only)
+// POST /api/questions/:questionId/attempt
+router.post("/:questionId/attempt", async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
+    const { userAnswer } = req.body;
 
-router.put("/:questionId", isOwner, upload.single("image"), async (req, res) => {
-  const questionId = Number(req.params.questionId);
+    if (!userAnswer) {
+      throw new ValidationError("Please answer the question");
+    }
 
-  const ques = await prisma.question.findUnique({ where: { id: questionId } });
+    const question = await prisma.question.findUnique({
+      where: { id: questionId },
+    });
 
-  if (!ques) {
-    throw new NotFoundError("Question doesn't exist")
-  }
+    if (!question) {
+      throw new NotFoundError("Question is missing");
+    }
 
-  const { question, date, answer, keywords } = questionInput.parse(req.body);
+    const isCorrect =
+      userAnswer.trim().toLowerCase() === question.answer.trim().toLowerCase();
 
-  if (!question || !date || !answer) {
-      throw new ValidationError("Question, date and answer are mandatory")
-  }
-
-  const imageUrl = req.file? `/uploads/${req.file.filename}` : null;
-
-  const keywordsArray = Array.isArray(keywords) ? keywords : [];
-  const updatedQuestion = await prisma.question.update({
-    where: { id: questionId },
-    data: {
-      question,
-      date: new Date(date),
-      imageUrl: req.file ? `/uploads/${req.file.filename}` : ques.imageUrl,
-      answer,
-      keywords: {
-        set: [],
-        connectOrCreate: keywordsArray.map((kw) => ({
-          where: { name: kw },
-          create: { name: kw },
-        })),
+    const attempt = await prisma.attempt.create({
+      data: {
+        userAnswer,
+        isCorrect,
+        user: { connect: { id: req.user.userId } },
+        question: { connect: { id: questionId } },
       },
-    },
-    include: { keywords: true, user: true },
-  });
-  res.json(formatQuestion(updatedQuestion, req.user.userId));
+    });
+
+    return res.status(201).json({
+      msg: "Question has been successfully attempted",
+      attempt,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-// Delete - Delete a question by Id(Owner only)
+// POST /api/questions/:questionId/bookmark
+router.post("/:questionId/bookmark", async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
+    const question = await prisma.question.findUnique({
+      where: { id: questionId },
+    });
 
-router.delete("/:questionId", isOwner, async (req, res) => {
-  const questionId = Number(req.params.questionId);
+    if (!question) {
+      throw new NotFoundError("Question not found");
+    }
 
-  const questionIndex = await prisma.question.findUnique({
-    where: { id: questionId },
-    include: { keywords: true, user: true },
-  });
+    const existingBookmark = await prisma.bookmark.findFirst({
+      where: { userId: req.user.userId, questionId },
+    });
 
-  if (!questionIndex) {
-    throw new NotFoundError("Question not found")
+    if (existingBookmark) {
+      throw new ValidationError("Question already bookmarked");
+    }
+
+    const bookmark = await prisma.bookmark.create({
+      data: {
+        user: { connect: { id: req.user.userId } },
+        question: { connect: { id: questionId } },
+      },
+    });
+
+    return res.status(201).json({
+      msg: "Question successfully bookmarked",
+      bookmark,
+    });
+  } catch (error) {
+    next(error);
   }
-
-  await prisma.attempt.deleteMany({
-    where: { questionId },
-  });
-
-  await prisma.bookmark.deleteMany({
-    where: { questionId },
-  });
-
-  await prisma.questionLike.deleteMany({
-    where: { questionId },
-  });
-
-  await prisma.question.delete({
-    where: { id: questionId },
-  });
-
-  res.json({
-    msg: "Question deleted successfully",
-    question: formatQuestion(questionIndex, req.user.userId),
-  });
 });
 
-// Post an attempt
+// DELETE /api/questions/:questionId/bookmark
+router.delete("/:questionId/bookmark", async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
 
-router.post("/:questionId/attempt", async (req, res) => {
-  const questionId = Number(req.params.questionId);
-  const { userAnswer } = req.body;
- 
-  if (!userAnswer) {
-    throw new ValidationError("Please answer the question")
+    const bookmark = await prisma.bookmark.findFirst({
+      where: { userId: req.user.userId, questionId },
+    });
+
+    if (!bookmark) {
+      throw new NotFoundError("Bookmark not found");
+    }
+
+    await prisma.bookmark.delete({ where: { id: bookmark.id } });
+
+    return res.json({ msg: "Bookmark successfully removed" });
+  } catch (error) {
+    next(error);
   }
-
-  const question = await prisma.question.findUnique({
-    where: { id: questionId },
-  });
-
-  if (!question) {
-    throw new NotFoundError("Question is missing")
-  }
-
-  const isCorrect =
-    userAnswer.trim().toLowerCase() === question.answer.trim().toLowerCase();
-
-  const attempt = await prisma.attempt.create({
-    data: {
-      userAnswer,
-      isCorrect,
-      user: {
-        connect: { id: req.user.userId },
-      },
-      question: {
-        connect: { id: questionId },
-      },
-    },
-  });
-
-  res.status(201).json({
-    msg: "Questio has been successfully attempted",
-    attempt,
-  });
 });
 
-// Post Bookmarks- Add a bookmark to a question
-router.post("/:questionId/bookmark", async (req, res) => {
-  const questionId = Number(req.params.questionId);
+// POST /api/questions/:questionId/like
+router.post("/:questionId/like", async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
+    const question = await prisma.question.findUnique({
+      where: { id: questionId },
+    });
 
-  const question = await prisma.question.findUnique({
-    where: { id: questionId },
-  });
+    if (!question) {
+      throw new NotFoundError("Question not found");
+    }
 
-  if (!question) {
-    throw new NotFoundError("Question not found")
-  }
+    const existingLike = await prisma.questionLike.findFirst({
+      where: { userId: req.user.userId, questionId },
+    });
 
-  const existingBookmark = await prisma.bookmark.findFirst({
-    where: {
-      userId: req.user.userId,
-      questionId,
-    },
-  });
+    if (existingLike) {
+      throw new ValidationError("Question already liked");
+    }
 
-  if (existingBookmark) {
-    throw new ValidationError("Question already bookmarked")
-  }
-
-  const bookmark = await prisma.bookmark.create({
-    data: {
-      user: {
-        connect: { id: req.user.userId },
+    const like = await prisma.questionLike.create({
+      data: {
+        user: { connect: { id: req.user.userId } },
+        question: { connect: { id: questionId } },
       },
-      question: {
-        connect: { id: questionId },
-      },
-    },
-  });
+    });
 
-  res.status(201).json({
-    msg: "Question successfully bookmarked",
-    bookmark,
-  });
+    return res.status(201).json({
+      msg: "Question liked successfully",
+      like,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-// Deleting bookmarks from a question
+// DELETE /api/questions/:questionId/like
+router.delete("/:questionId/like", async (req, res, next) => {
+  try {
+    const questionId = Number(req.params.questionId);
 
-router.delete("/:questionId/bookmark", async (req, res) => {
-  const questionId = Number(req.params.questionId);
+    const like = await prisma.questionLike.findFirst({
+      where: { userId: req.user.userId, questionId },
+    });
 
-  const bookmark = await prisma.bookmark.findFirst({
-    where: {
-      userId: req.user.userId,
-      questionId,
-    },
-  });
+    if (!like) {
+      throw new NotFoundError("Like not found");
+    }
 
-  if (!bookmark) {
-    throw new NotFoundError("Bookmark not found")
+    await prisma.questionLike.delete({ where: { id: like.id } });
+
+    return res.json({ msg: "Question unliked successfully" });
+  } catch (error) {
+    next(error);
   }
-
-  await prisma.bookmark.delete({
-    where: {
-      id: bookmark.id,
-    },
-  });
-
-  res.json({
-    msg: "Bookmark successfully removed",
-  });
 });
-
-// LIKE a question
-router.post("/:questionId/like", async (req, res) => {
-  const questionId = Number(req.params.questionId);
-
-  const question = await prisma.question.findUnique({
-    where: { id: questionId },
-  });
-
-  if (!question) {
-    throw new NotFoundError("Question not found")
-  }
-
-  const existingLike = await prisma.questionLike.findFirst({
-    where: {
-      userId: req.user.userId,
-      questionId,
-    },
-  });
-
-  if (existingLike) {
-    throw new ValidationError("Question already liked")
-  }
-
-  const like = await prisma.questionLike.create({
-    data: {
-      user: {
-        connect: { id: req.user.userId },
-      },
-      question: {
-        connect: { id: questionId },
-      },
-    },
-  });
-
-  res.status(201).json({
-    msg: "Question liked successfully",
-    like,
-  });
-});
-
-// UNLIKE a question
-router.delete("/:questionId/like", async (req, res) => {
-  const questionId = Number(req.params.questionId);
-
-  const like = await prisma.questionLike.findFirst({
-    where: {
-      userId: req.user.userId,
-      questionId,
-    },
-  });
-
-  if (!like) {
-    throw new NotFoundError("Like not found")
-  }
-
-  await prisma.questionLike.delete({
-    where: {
-      id: like.id,
-    },
-  });
-
-  res.json({
-    msg: "Question unliked successfully",
-  });
-});
-
-
 
 module.exports = router;
