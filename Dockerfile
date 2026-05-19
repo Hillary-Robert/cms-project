@@ -1,17 +1,14 @@
 FROM node:22-alpine
 
-WORKDIR /app 
+WORKDIR /app
 
 COPY package*.json ./
-
 RUN npm ci
 
 COPY prisma ./prisma
-RUN npx prisma generate
-
+RUN DATABASE_URL=mysql://localhost:3306/placeholder npx prisma generate
 
 COPY . .
-
 
 ENV NODE_ENV=production
 EXPOSE 3000
