@@ -22,8 +22,6 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - DATABASE_URL=mysql://cms_user:cms_password@db:3306/cms
     env_file:
       - .env
     depends_on:
