@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { prisma } = require("../lib/prisma");
+const prisma = require("../lib/prisma");
 const authenticate = require("../middleware/auth");
 const isOwner = require("../middleware/isOwner");
 const multer = require("multer");
@@ -14,7 +14,7 @@ router.use(authenticate);
 // Zod schema for input validation
 const questionInput = z.object({
   question: z.string().min(1),
-  date: z.coerce.date(),
+  date: z.string().min(1),
   answer: z.string().min(1),
   keywords: z.union([z.string(), z.array(z.string())]).optional(),
 });
@@ -47,14 +47,23 @@ function formatQuestion(question, currentUserId) {
 
   const isAttempted = question.attempts?.length > 0;
   const isOwner = question.userId === currentUserId;
-
   const likesArray = question.questionLike || question.likes || [];
+
+  // 🔥 SAFE KEYWORD PARSING LAYER
+  let formattedKeywords = [];
+  if (Array.isArray(question.keywords)) {
+    formattedKeywords = question.keywords.map((k) => {
+      if (typeof k === "string") return k; // If it's a plain string, return it directly!
+      if (k && typeof k === "object" && k.name) return k.name; // If it's a relational object, extract .name!
+      return null;
+    }).filter(Boolean);
+  }
 
   return {
     ...question,
-    date: question.date ? question.date.toISOString().split("T")[0] : null,
+    date: question.date ? (typeof question.date.toISOString === 'function' ? question.date.toISOString().split("T")[0] : question.date) : null,
     answer: isOwner || isAttempted ? question.answer : undefined,
-    keywords: question.keywords ? question.keywords.map((k) => k.name) : [],
+    keywords: formattedKeywords, // 🚀 Uses our clean, safe array values
     userName: question.user ? question.user.name : null,
     isAttempted,
     isOwner,
@@ -73,6 +82,7 @@ function formatQuestion(question, currentUserId) {
   };
 }
 
+/*
 // GET /api/questions/
 router.get("/", async (req, res, next) => {
   try {
@@ -112,12 +122,77 @@ router.get("/", async (req, res, next) => {
           take: limit,
         });
       }
-    } catch (dbError) {
+        } catch (dbError) {
+      console.error("QUERY ERROR:", dbError);
+      
       total = 0;
       filteredQuestions = [];
     }
 
+
     // 4. Return a clean, structured JSON response payload
+    return res.status(200).json({
+      data: filteredQuestions.map((q) => formatQuestion(q, req.user.userId)),
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 0,
+    });
+  } catch (error) {
+    next(error);
+  }
+}); */
+
+
+
+// GET /api/questions/
+router.get("/", async (req, res, next) => {
+  try {
+    const { keyword } = req.query;
+    const where = keyword ? { keywords: { some: { name: keyword } } } : {};
+
+    const rawPage = parseInt(req.query.page, 10);
+    const rawLimit = parseInt(req.query.limit, 10);
+
+    const page = Math.max(1, isNaN(rawPage) ? 1 : rawPage);
+    const limit = Math.max(1, Math.min(100, isNaN(rawLimit) ? 5 : rawLimit));
+    const skip = (page - 1) * limit;
+
+    let filteredQuestions = [];
+    let total = 0;
+
+    try {
+      total = await prisma.question.count({ where });
+
+      if (total > 0) {
+        filteredQuestions = await prisma.question.findMany({
+          where,
+          include: {
+            keywords: true,
+            user: true,
+            attempts: { where: { userId: req.user.userId }, take: 1 },
+            bookmarks: { where: { userId: req.user.userId }, take: 1 },
+            // 🚀 FIX 1: Changed from questionLike to likes to match your schema
+            likes: { where: { userId: req.user.userId }, take: 1 }, 
+            _count: {
+              select: { 
+                attempts: true, 
+                bookmarks: true, 
+                likes: true // 🚀 FIX 2: Changed counter name here too
+              },
+            },
+          },
+          orderBy: { id: "asc" },
+          skip,
+          take: limit,
+        });
+      }
+    } catch (dbError) {
+      console.error("Real dashboard tracking error: ", dbError);
+      total = 0;
+      filteredQuestions = [];
+    }
+
     return res.status(200).json({
       data: filteredQuestions.map((q) => formatQuestion(q, req.user.userId)),
       page,
@@ -181,10 +256,9 @@ router.get("/:questionId", async (req, res, next) => {
         user: true,
         attempts: { where: { userId: req.user.userId }, take: 1 },
         bookmarks: { where: { userId: req.user.userId }, take: 1 },
-        // FIXED: Use questionLike to match schema structure
-        questionLike: { where: { userId: req.user.userId }, take: 1 },
+        likes: { where: { userId: req.user.userId }, take: 1 }, 
         _count: {
-          select: { attempts: true, bookmarks: true, questionLike: true },
+          select: { attempts: true, bookmarks: true, likes: true }, 
         },
       },
     });
@@ -195,7 +269,7 @@ router.get("/:questionId", async (req, res, next) => {
 
     return res.json(formatQuestion(question, req.user.userId));
   } catch (error) {
-    return res.status(404).json({ message: "question not found" });
+    next(error); 
   }
 });
 
