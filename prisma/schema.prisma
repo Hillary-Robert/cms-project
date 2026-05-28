@@ -17,23 +17,24 @@ model User {
   questionLikes QuestionLike[]
   questions     Question[]
 }
-
 model Question {
-  id        Int            @id @default(autoincrement())
-  question  String         @db.VarChar(255)
-  date      DateTime
-  answer    String         @db.Text
-  userId    Int
-  imageUrl  String?        @db.VarChar(255)
-  attempts  Attempt[]
-  bookmarks Bookmark[]
-  likes     QuestionLike[]
-  user      User           @relation(fields: [userId], references: [id])
-  keywords  Keyword[]      @relation("KeywordToQuestion")
+  id         Int            @id @default(autoincrement())
+  question   String         @db.VarChar(255)
+  date       DateTime
+  answer     String         @db.Text
+  userId     Int
+  imageUrl   String?        @db.VarChar(255)
+  difficulty String         @default("medium") @db.VarChar(50) // 👈 ADD THIS LINE
+  attempts   Attempt[]
+  bookmarks  Bookmark[]
+  likes      QuestionLike[]
+  user       User           @relation(fields: [userId], references: [id])
+  keywords   Keyword[]      @relation("KeywordToQuestion")
 
   @@index([userId], map: "questions_userId_fkey")
   @@map("questions")
 }
+
 
 model Keyword {
   id        Int        @id @default(autoincrement())

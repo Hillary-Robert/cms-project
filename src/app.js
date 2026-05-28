@@ -1,6 +1,7 @@
 const express = require('express');
-const authRouter = require("./routes/auth");
-const questionsRouter = require("./routes/questions");
+const authRouter = require("./routes/auth"); 
+const questionsRouter = require("./routes/questions"); 
+const leaderboardRouter = require("./routes/leaderboard"); 
 const path = require("path");
 const errorHandler = require('./middleware/errorHandler');
 const { NotFoundError } = require('./lib/errors');
@@ -19,9 +20,10 @@ app.use(express.json());
 
 app.use("/api/auth", authRouter);
 app.use("/api/questions", questionsRouter);
+app.use("/api/leaderboard", leaderboardRouter); 
 
 app.use((req, res, next) => {
-  next ( new NotFoundError("Page not found"))
+  next(new NotFoundError("Page not found"));
 });
 
 app.use(errorHandler);

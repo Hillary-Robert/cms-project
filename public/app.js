@@ -140,7 +140,7 @@ async function showApp() {
   await loadQuestions();
 }
 
-async function loadQuestions(keyword = "", page = 1) {
+async function loadQuestions(keyword = "", page = 1, selectedDifficulty = "") {
   const container = document.getElementById("questions-container");
   container.innerHTML = '<p class="loading">Loading questions...</p>';
 
@@ -151,6 +151,7 @@ async function loadQuestions(keyword = "", page = 1) {
     });
 
     if (keyword) params.set("keyword", keyword);
+    if (selectedDifficulty) params.set("difficulty", selectedDifficulty);
 
     const result = await apiFetch(`${CONFIG.ROUTES.QUESTIONS}?${params}`);
 
@@ -172,9 +173,20 @@ async function loadQuestions(keyword = "", page = 1) {
       </div>
 
       <div class="toolbar">
-        <button class="btn btn-primary" id="new-question-btn">+ New Question</button>
+        <div>
+           <button class="btn btn-primary" id="new-question-btn">+ New Question</button>
+           <button class="btn btn-leaderboard" id="open-leaderboard-btn">Leaderboard</button>
+           <button class="btn btn-ai" id="open-ai-btn">Gemini AI Generator</button>
+        </div>
 
         <div class="search-bar">
+          <select id="difficulty-filter" class="filter-select">
+            <option value="">All Difficulties</option>
+            <option value="easy" ${selectedDifficulty === "easy" ? "selected" : ""}>Easy</option>
+            <option value="medium" ${selectedDifficulty === "medium" ? "selected" : ""}>Medium</option>
+            <option value="hard" ${selectedDifficulty === "hard" ? "selected" : ""}>Hard</option>
+          </select>
+
           <input 
             type="text" 
             id="keyword-input" 
@@ -182,13 +194,13 @@ async function loadQuestions(keyword = "", page = 1) {
             value="${keyword}" 
           />
           <button class="btn btn-search" id="search-btn">Search</button>
-          ${keyword ? `<button class="btn btn-clear" id="clear-btn">Clear</button>` : ""}
+          ${keyword || selectedDifficulty ? `<button class="btn btn-clear" id="clear-btn">Clear</button>` : ""}
         </div>
       </div>
     `;
 
     if (questions.length === 0) {
-      html += `<p class="empty-state">No questions found. Create one to get started!</p>`;
+      html += `<p class="empty-state">No questions found. Match parameters or create one to get started!</p>`;
     } else {
       html += questions
         .map(
@@ -200,9 +212,8 @@ async function loadQuestions(keyword = "", page = 1) {
               </a>
 
               ${q.isCorrect ? `<span class="badge-solved">Correct</span>` : ""}
-              ${q.isAttempted && !q.isCorrect ? `<span class="badge-solved">Attempted</span>` : ""}
-              ${q.isBookmarked ? `<span class="badge-solved">Bookmarked</span>` : ""}
-              ${q.isLiked ? `<span class="badge-solved">Liked</span>` : ""}
+              ${q.isAttempted && !q.isCorrect ? `<span class="badge-solved" style="background:#f7971e;">Attempted</span>` : ""}
+              <span class="badge-difficulty ${q.difficulty || "medium"}">${q.difficulty || "medium"}</span>
             </h3>
 
             ${
@@ -270,26 +281,30 @@ async function loadQuestions(keyword = "", page = 1) {
 
     container.innerHTML = html;
 
-    document
-      .getElementById("new-question-btn")
-      .addEventListener("click", () => showQuestionForm());
+    document.getElementById("new-question-btn").addEventListener("click", () => showQuestionForm());
+    document.getElementById("open-leaderboard-btn").addEventListener("click", () => showLeaderboardView());
+    document.getElementById("open-ai-btn").addEventListener("click", () => showAiGeneratorView());
 
-    document.getElementById("search-btn").addEventListener("click", () => {
-      loadQuestions(document.getElementById("keyword-input").value.trim(), 1);
-    });
+    const triggerFiltering = () => {
+      const keywordVal = document.getElementById("keyword-input").value.trim();
+      const difficultyVal = document.getElementById("difficulty-filter").value;
+      loadQuestions(keywordVal, 1, difficultyVal);
+    };
 
+    document.getElementById("search-btn").addEventListener("click", triggerFiltering);
+    document.getElementById("difficulty-filter").addEventListener("change", triggerFiltering);
     document.getElementById("keyword-input").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") loadQuestions(e.target.value.trim(), 1);
+      if (e.key === "Enter") triggerFiltering();
     });
 
     const clearBtn = document.getElementById("clear-btn");
-    if (clearBtn) clearBtn.addEventListener("click", () => loadQuestions());
+    if (clearBtn) clearBtn.addEventListener("click", () => loadQuestions("", 1, ""));
 
     const prevBtn = document.getElementById("prev-btn");
-    if (prevBtn) prevBtn.addEventListener("click", () => loadQuestions(keyword, page - 1));
+    if (prevBtn) prevBtn.addEventListener("click", () => loadQuestions(keyword, page - 1, selectedDifficulty));
 
     const nextBtn = document.getElementById("next-btn");
-    if (nextBtn) nextBtn.addEventListener("click", () => loadQuestions(keyword, page + 1));
+    if (nextBtn) nextBtn.addEventListener("click", () => loadQuestions(keyword, page + 1, selectedDifficulty));
 
     container.querySelectorAll(".question-link, .read-more").forEach((el) => {
       el.addEventListener("click", (e) => {
@@ -311,19 +326,100 @@ async function loadQuestions(keyword = "", page = 1) {
     });
 
     container.querySelectorAll(".btn-bookmark").forEach((el) => {
-      el.addEventListener("click", () =>
-        toggleBookmark(el.dataset.id, keyword, page)
-      );
+      el.addEventListener("click", () => toggleBookmark(el.dataset.id, keyword, page));
     });
 
     container.querySelectorAll(".btn-like").forEach((el) => {
-      el.addEventListener("click", () =>
-        toggleLike(el.dataset.id, keyword, page)
-      );
+      el.addEventListener("click", () => toggleLike(el.dataset.id, keyword, page));
     });
   } catch (err) {
     container.innerHTML = `<p class="error">${err.message}</p>`;
   }
+}
+
+async function showLeaderboardView() {
+  const container = document.getElementById("questions-container");
+  container.innerHTML = '<p class="loading">Fetching high-scores data maps...</p>';
+
+  try {
+    const leaderboard = await apiFetch("/api/leaderboard");
+
+    let listHtml = leaderboard.length === 0 
+      ? `<p style="color:#888;text-align:center;padding:1rem;">No valid successful quiz entries tracked yet.</p>`
+      : leaderboard.map((user, idx) => `
+          <div style="display:flex;justify-content:space-between;padding:0.8rem 1rem;background:rgba(255,255,255,0.04);margin-bottom:0.5rem;border-radius:8px;border:1px solid rgba(255,255,255,0.05)">
+            <span style="font-weight:700;"><span style="color:#ffd200">#${idx + 1}</span> ${user.name || "Anonymous"}</span>
+            <span style="color:#51cf66;font-weight:800">${user.successfulAttemptsCount || 0} Correct Answers</span>
+          </div>
+        `).join("");
+
+    container.innerHTML = `
+      <a href="#" id="back-btn" class="back-link">&larr; Back to questions</a>
+      <div class="question-form-wrapper">
+        <h2>Global Top 5 Leaderboard</h2>
+        <p style="margin-bottom:1.5rem;color:#888;font-size:0.9rem">Ranked in real-time based on total validated correct attempts.</p>
+        <div style="margin-top:1rem">${listHtml}</div>
+      </div>
+    `;
+
+    document.getElementById("back-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      loadQuestions();
+    });
+  } catch (err) {
+    container.innerHTML = `<p class="error">${err.message}</p>`;
+  }
+}
+
+function showAiGeneratorView() {
+  const container = document.getElementById("questions-container");
+  container.innerHTML = `
+    <a href="#" id="back-btn" class="back-link">&larr; Back to questions</a>
+    <div class="question-form-wrapper">
+      <h2>Gemini AI Question Generator</h2>
+      <p style="margin-bottom:1.5rem;color:#888;font-size:0.9rem">Type any topic. Our automated Gemini pipeline will design and write a valid question directly into the database system layer.</p>
+      
+      <form id="ai-generator-form">
+        <div class="form-group">
+          <label for="ai-topic">Topic / Subject Matter</label>
+          <input type="text" id="ai-topic" placeholder="e.g. JavaScript, World War II, Photosynthesis" required />
+        </div>
+        <button type="submit" class="btn btn-play" style="width:100%;margin-top:0.5rem;padding:0.75rem">Generate & Save via Gemini</button>
+      </form>
+      <div id="ai-output-status" style="margin-top:1.2rem;text-align:center"></div>
+    </div>
+  `;
+
+  document.getElementById("back-btn").addEventListener("click", (e) => {
+    e.preventDefault();
+    loadQuestions();
+  });
+
+  document.getElementById("ai-generator-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const statusEl = document.getElementById("ai-output-status");
+    const topicVal = document.getElementById("ai-topic").value.trim();
+
+    statusEl.innerHTML = `<p class="loading" style="padding:0">Gemini is engineering your custom question payload...</p>`;
+
+    try {
+      const response = await apiFetch("/api/questions/ai-generate", {
+        method: "POST",
+        body: JSON.stringify({ topic: topicVal })
+      });
+
+      statusEl.innerHTML = `
+        <div class="play-result correct">
+          Successfully Generated Quiz Card!<br/>
+          <span style="font-size:0.95rem;font-weight:600;color:#fff">"${response.question}"</span><br/>
+          <span class="badge-difficulty ${response.difficulty}" style="margin-top:0.5rem;display:inline-block">${response.difficulty}</span>
+        </div>
+      `;
+      document.getElementById("ai-topic").value = "";
+    } catch (err) {
+      statusEl.innerHTML = `<div class="play-result incorrect">AI Generation failed: ${err.message}</div>`;
+    }
+  });
 }
 
 // --- Detail ---
@@ -343,8 +439,7 @@ async function loadQuestionDetail(qId) {
         <h3>
           ${q.question}
           ${q.isCorrect ? `<span class="badge-solved">Correct</span>` : ""}
-          ${q.isBookmarked ? `<span class="badge-solved">Bookmarked</span>` : ""}
-          ${q.isLiked ? `<span class="badge-solved">Liked</span>` : ""}
+          <span class="badge-difficulty ${q.difficulty || "medium"}">${q.difficulty || "medium"}</span>
         </h3>
 
         <p class="question-meta">by ${q.userName || "Unknown"}</p>
@@ -400,12 +495,11 @@ async function loadQuestionDetail(qId) {
     });
 
     const detailPlayBtn = document.getElementById("detail-play-btn");
-
-if (detailPlayBtn) {
-  detailPlayBtn.addEventListener("click", () => {
-    playQuestion(qId);
-  });
-}
+    if (detailPlayBtn) {
+      detailPlayBtn.addEventListener("click", () => {
+        playQuestion(qId);
+      });
+    }
 
     document.getElementById("detail-bookmark-btn").addEventListener("click", () => {
       toggleBookmark(qId);
@@ -440,6 +534,7 @@ async function showQuestionForm(qId) {
     answer: "",
     keywords: [],
     imageUrl: "",
+    difficulty: "medium"
   };
 
   if (isEdit) {
@@ -466,6 +561,15 @@ async function showQuestionForm(qId) {
         <div class="form-group">
           <label for="q-date">Date</label>
           <input type="date" id="q-date" value="${q.date || ""}" required />
+        </div>
+
+        <div class="form-group">
+          <label for="q-difficulty">Difficulty Assignment</label>
+          <select id="q-difficulty" style="width:100%;padding:0.7rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:10px;color:#fff;font-family:inherit;">
+            <option value="easy" ${q.difficulty === "easy" ? "selected" : ""}>Easy</option>
+            <option value="medium" ${q.difficulty === "medium" ? "selected" : ""}>Medium</option>
+            <option value="hard" ${q.difficulty === "hard" ? "selected" : ""}>Hard</option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -517,6 +621,7 @@ async function showQuestionForm(qId) {
     formData.append("question", document.getElementById("q-question").value);
     formData.append("date", document.getElementById("q-date").value);
     formData.append("answer", document.getElementById("q-answer").value);
+    formData.append("difficulty", document.getElementById("q-difficulty").value);
 
     document
       .getElementById("q-keywords")
@@ -637,7 +742,7 @@ async function playQuestion(qId) {
       }
     });
   } catch (err) {
-    container.innerHTML = `<p class="error">${err.message}</p>`;
+    container.innerHTML = `<p class="error">${err.message}</p>`; // Fixed quote mismatch
   }
 }
 
