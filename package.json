@@ -1,7 +1,7 @@
 {
   "name": "cms_project",
   "version": "1.0.0",
-  "description": "Learning Node js",
+  "description": "Quiz API with AI question generation",
   "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
