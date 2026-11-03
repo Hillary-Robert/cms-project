@@ -24,7 +24,7 @@ model Question {
   answer     String         @db.Text
   userId     Int
   imageUrl   String?        @db.VarChar(255)
-  difficulty String         @default("medium") @db.VarChar(50) // 👈 ADD THIS LINE
+  difficulty String         @default("medium") @db.VarChar(50)
   attempts   Attempt[]
   bookmarks  Bookmark[]
   likes      QuestionLike[]
