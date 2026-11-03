@@ -1,7 +1,6 @@
 const request = require("supertest");
 const app = require("../src/app");
 const prisma = require("../src/lib/prisma");
-console.log(Object.keys(prisma));
 async function resetDb() {
   await prisma.questionLike.deleteMany();
   await prisma.bookmark.deleteMany();
