@@ -1,27 +1,27 @@
 const express = require("express");
 const router = express.Router();
 const prisma = require("../lib/prisma");
-const jwt = require("jsonwebtoken")
+const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
-const { ValidationError, ConflictError, UnauthorizedError, ForbiddenError } = require("../lib/errors");
+const { ValidationError, ConflictError, UnauthorizedError } = require("../lib/errors");
+
 const SECRET = process.env.JWT_SECRET;
+if (!SECRET) {
+  throw new Error("JWT_SECRET is not set");
+}
 
-console.log("JWT_SECRET:", process.env.JWT_SECRET);
+// POST /api/auth/register
+router.post("/register", async (req, res) => {
+  const { email, password, name } = req.body;
 
-// Post/api/auth/register
-router.post("/register", async(req, res)=>{
-  const {email, password, name} = req.body
-
-  if(!email || !password || !name){
-    
-    throw new ValidationError("email, password and name are required")
+  if (!email || !password || !name) {
+    throw new ValidationError("email, password and name are required");
   }
 
   // Check if user already exists
-  const existingUser = await prisma.user.findUnique({ where: { email },});
-
+  const existingUser = await prisma.user.findUnique({ where: { email } });
   if (existingUser) {
-    throw new ConflictError("Email already registered")
+    throw new ConflictError("Email already registered");
   }
 
   // Hash the password
@@ -39,39 +39,26 @@ router.post("/register", async(req, res)=>{
     message: "User registered successfully",
     token,
   });
+});
 
-})
-
-
-// Post/api/auth/login
-
+// POST /api/auth/login
 router.post("/login", async (req, res) => {
-  console.log("Incoming body:", req.body);
   const { email, password } = req.body;
 
-  
-
   if (!email || !password) {
-    throw new ValidationError("email and password are required")
+    throw new ValidationError("email and password are required");
   }
 
   // Find the user
-  const user = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  console.log("User found:", user);
-
+  const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
-    throw new ForbiddenError("Invalid credentials")
+    throw new UnauthorizedError("Invalid credentials");
   }
 
   // Verify the password
   const isValid = await bcrypt.compare(password, user.password);
-  console.log("Password valid:", isValid);
-
   if (!isValid) {
-    throw new ForbiddenError("Invalid credentials")  
+    throw new UnauthorizedError("Invalid credentials");
   }
 
   // Generate a token
@@ -80,7 +67,4 @@ router.post("/login", async (req, res) => {
   res.json({ token });
 });
 
-
-module.exports = router
-
-
+module.exports = router;
